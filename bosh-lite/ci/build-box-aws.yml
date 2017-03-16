@@ -1,0 +1,27 @@
+---
+platform: linux
+
+image_resource:
+  type: docker-image
+  source:
+    repository: cloudfoundry/bosh-lite-ci
+
+inputs:
+- name: bosh-lite
+- name: box-version
+- name: bosh-release
+- name: bosh-warden-cpi-release
+- name: garden-linux-release
+
+outputs:
+- name: box-out
+
+params:
+  BOSH_AWS_ACCESS_KEY_ID:
+  BOSH_AWS_SECRET_ACCESS_KEY:
+  AWS_ACCESS_KEY_ID: # todo dup
+  AWS_SECRET_ACCESS_KEY:
+  AWS_DEFAULT_REGION: us-east-1
+
+run:
+  path: bosh-lite/ci/build-box-aws.sh

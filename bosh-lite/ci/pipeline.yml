@@ -1,0 +1,316 @@
+---
+jobs:
+- name: new-box
+  public: true
+  serial: true
+  plan:
+  - aggregate:
+    # Nothing is triggered by default
+    - get: bosh-lite
+    - get: bosh-release
+    - get: bosh-warden-cpi-release
+    - get: garden-linux-release
+    - {get: box-version, params: {bump: minor}}
+  - put: box-version
+    params: {file: box-version/number}
+
+- name: build-box-vbox
+  public: true
+  serial: true
+  plan:
+  - aggregate:
+    - {get: bosh-lite, passed: [new-box]}
+    - {get: box-version, passed: [new-box], trigger: true}
+    - {get: bosh-release, passed: [new-box]}
+    - {get: bosh-warden-cpi-release, passed: [new-box]}
+    - {get: garden-linux-release, passed: [new-box]}
+  - task: build-box
+    privileged: true
+    tags: [hetzner]
+    file: bosh-lite/ci/build-box-local.yml
+    config:
+      params:
+        BOSH_AWS_ACCESS_KEY_ID: {{aws_key_id}}
+        BOSH_AWS_SECRET_ACCESS_KEY: {{aws_secret_access_key}}
+  - put: pipeline-bucket-vbox
+    params: {file: box-out/bosh-lite-*.box}
+
+- name: bats-vbox
+  public: true
+  serial: true
+  plan:
+  - put: hetzner
+    params: {acquire: true}
+  - ensure:
+      put: hetzner
+      params: {release: hetzner}
+    do:
+    - aggregate:
+      - {get: bosh-lite, passed: [build-box-vbox]}
+      - {get: box-version, passed: [build-box-vbox]}
+      - {get: box, passed: [build-box-vbox], resource: pipeline-bucket-vbox, trigger: true}
+    - task: build
+      privileged: true
+      tags: [hetzner]
+      file: bosh-lite/ci/bats-local.yml
+
+- name: build-box-aws
+  serial: true
+  plan:
+  - aggregate:
+    - {get: bosh-lite, passed: [new-box]}
+    - {get: box-version, passed: [new-box], trigger: true}
+    - {get: bosh-release, passed: [new-box]}
+    - {get: bosh-warden-cpi-release, passed: [new-box]}
+    - {get: garden-linux-release, passed: [new-box]}
+  - task: build-box
+    file: bosh-lite/ci/build-box-aws.yml
+    config:
+      params:
+        BOSH_AWS_ACCESS_KEY_ID: {{aws_key_id}}
+        BOSH_AWS_SECRET_ACCESS_KEY: {{aws_secret_access_key}}
+  - put: pipeline-bucket-aws
+    params: {file: box-out/bosh-lite-*.box}
+
+- name: bats-aws
+  serial: true
+  plan:
+  - aggregate:
+    - {get: bosh-lite, passed: [build-box-aws]}
+    - {get: box-version, passed: [build-box-aws]}
+    - {get: box, passed: [build-box-aws], resource: pipeline-bucket-aws, trigger: true}
+  - task: build
+    privileged: true
+    file: bosh-lite/ci/bats-aws.yml
+    config:
+      params:
+        BOSH_AWS_ACCESS_KEY_ID: {{aws_key_id}}
+        BOSH_AWS_SECRET_ACCESS_KEY: {{aws_secret_access_key}}
+        BOSH_LITE_PRIVATE_KEY: {{bosh_lite_private_key}}
+
+- name: build-box-docker
+  public: true
+  serial: true
+  plan:
+  - aggregate:
+    - {get: bosh-lite, passed: [new-box]}
+    - {get: box-version, passed: [new-box], trigger: true}
+    - {get: bosh-release, passed: [new-box]}
+    - {get: bosh-warden-cpi-release, passed: [new-box]}
+    - {get: garden-linux-release, passed: [new-box]}
+  - task: build-box
+    privileged: true
+    file: bosh-lite/ci/build-box-docker.yml
+    config:
+      params:
+        PACKER_LOG: 1
+  - put: pipeline-bucket-docker
+    params: {file: box-out/bosh-lite-docker-*.tar}
+
+- name: deploy-cf-aws
+  serial: true
+  plan:
+  - aggregate:
+    - {get: bosh-lite, passed: [build-box-aws]}
+    - {get: box-version, passed: [build-box-aws]}
+    - get: cf-release # No trigger, dont care about new cf versions
+    - {get: box, passed: [build-box-aws], resource: pipeline-bucket-aws, trigger: true}
+  - task: build
+    privileged: true
+    file: bosh-lite/ci/deploy-cf-aws.yml
+    config:
+      params:
+        BOSH_AWS_ACCESS_KEY_ID: {{aws_key_id}}
+        BOSH_AWS_SECRET_ACCESS_KEY: {{aws_secret_access_key}}
+        BOSH_LITE_PRIVATE_KEY: {{bosh_lite_private_key}}
+
+- name: publish-boxes
+  public: true
+  serial: true
+  plan:
+  - aggregate:
+    - {get: bosh-lite, passed: [bats-vbox, bats-aws, deploy-cf-aws]}
+    - {get: box-version, passed: [bats-vbox, bats-aws, deploy-cf-aws], trigger: true}
+    - {get: pipeline-bucket-vbox, passed: [bats-vbox]}
+    - {get: pipeline-bucket-aws, passed: [bats-aws, deploy-cf-aws]}
+  - aggregate:
+    - put: final-boxes-bucket-vbox
+      params: {file: pipeline-bucket-vbox/*.box}
+    - put: final-boxes-bucket-aws
+      params: {file: pipeline-bucket-aws/*.box}
+  - put: atlas-vbox
+    params:
+      version: final-boxes-bucket-vbox/version
+      url: final-boxes-bucket-vbox/url
+      release: true
+  - put: atlas-aws
+    params:
+      version: final-boxes-bucket-aws/version
+      url: final-boxes-bucket-aws/url
+      release: true
+
+- name: publish-docker-box
+  public: true
+  serial: true
+  plan:
+  - aggregate:
+    - {get: bosh-lite, passed: [bats-vbox, bats-aws, deploy-cf-aws, build-box-docker]}
+    - {get: box-version, passed: [bats-vbox, bats-aws, deploy-cf-aws, build-box-docker], trigger: true}
+    - {get: pipeline-bucket-docker, passed: [build-box-docker]}
+  - task: rename-tar
+    config:
+      platform: linux
+      image_resource:
+        type: docker-image
+        source: {repository: cloudfoundry/bosh-lite-ci}
+      run:
+        path: /bin/bash
+        args: ["-c", "mkdir -p image/ && mv pipeline-bucket-docker/bosh-lite-docker-*.tar image/image.tar"]
+      inputs:
+      - name: pipeline-bucket-docker
+      outputs:
+      - name: image
+  - put: final-docker
+    params:
+      import_file: image/image.tar # docker-image resource doesnt support globs right now
+      tag: box-version/number
+      tag_as_latest: true
+
+- name: promote-repo
+  public: true
+  serial: true
+  plan:
+  - aggregate:
+    - {get: bosh-lite, passed: [publish-boxes, publish-docker-box]}
+    - {get: box-version, passed: [publish-boxes, publish-docker-box], trigger: true}
+  - task: update-box-version
+    file: bosh-lite/ci/update-box-version.yml
+  - aggregate:
+    - put: promoted-bosh-lite
+      # - do not rebase; no one should push to master!
+      # - push tag only in one put to avoid a race
+      params: {repository: bosh-lite-out, tag: box-version/number}
+    - put: bosh-lite
+      params: {repository: bosh-lite-out, rebase: true}
+
+resources:
+- name: box-version
+  type: semver
+  source:
+    bucket: bosh-lite-ci-pipeline
+    key: box-version
+    initial_version: 9000.0.0
+    access_key_id: {{aws_key_id}}
+    secret_access_key: {{aws_secret_access_key}}
+    region_name: us-east-1
+
+- name: cf-release
+  type: git
+  source:
+    uri: https://github.com/cloudfoundry/cf-release.git
+    branch: master
+
+- name: bosh-lite
+  type: git
+  source:
+    uri: git@github.com:cloudfoundry/bosh-lite.git
+    branch: develop
+    private_key: {{bosh_lite_key}}
+
+- name: promoted-bosh-lite
+  type: git
+  source:
+    uri: git@github.com:cloudfoundry/bosh-lite.git
+    branch: master
+    private_key: {{bosh_lite_key}}
+
+- name: atlas-vbox
+  type: vagrant-cloud
+  source:
+    username: cloudfoundry
+    box: bosh-lite
+    provider: virtualbox
+    access_token: {{atlas_access_token}}
+
+- name: atlas-aws
+  type: vagrant-cloud
+  source:
+    username: cloudfoundry
+    box: bosh-lite
+    provider: aws
+    access_token: {{atlas_access_token}}
+
+- name: pipeline-bucket-vbox
+  type: s3
+  source:
+    bucket: bosh-lite-ci-pipeline
+    regexp: bosh-lite-virtualbox-ubuntu-trusty-(.*).box
+    access_key_id: {{aws_key_id}}
+    secret_access_key: {{aws_secret_access_key}}
+    region_name: us-east-1
+
+- name: pipeline-bucket-aws
+  type: s3
+  source:
+    bucket: bosh-lite-ci-pipeline
+    regexp: bosh-lite-aws-ubuntu-trusty-(.*).box
+    access_key_id: {{aws_key_id}}
+    secret_access_key: {{aws_secret_access_key}}
+    region_name: us-east-1
+
+- name: pipeline-bucket-docker
+  type: s3
+  source:
+    bucket: bosh-lite-ci-pipeline
+    regexp: bosh-lite-docker-(.*).tar
+    access_key_id: {{aws_key_id}}
+    secret_access_key: {{aws_secret_access_key}}
+    region_name: us-east-1
+
+- name: final-boxes-bucket-vbox
+  type: s3
+  source:
+    bucket: bosh-lite-boxes
+    regexp: bosh-lite-virtualbox-ubuntu-trusty-(.*).box
+    access_key_id: {{aws_key_id}}
+    secret_access_key: {{aws_secret_access_key}}
+    region_name: us-east-1
+    cloudfront_url: https://d2u2rxhdayhid5.cloudfront.net
+
+- name: final-boxes-bucket-aws
+  type: s3
+  source:
+    bucket: bosh-lite-boxes
+    regexp: bosh-lite-aws-ubuntu-trusty-(.*).box
+    access_key_id: {{aws_key_id}}
+    secret_access_key: {{aws_secret_access_key}}
+    region_name: us-east-1
+    cloudfront_url: https://d2u2rxhdayhid5.cloudfront.net
+
+- name: bosh-release
+  type: bosh-io-release
+  source: {repository: cloudfoundry/bosh}
+
+- name: bosh-warden-cpi-release
+  type: bosh-io-release
+  source: {repository: cppforlife/bosh-warden-cpi-release}
+
+- name: garden-linux-release
+  type: bosh-io-release
+  source: {repository: cloudfoundry-incubator/garden-linux-release}
+
+- name: final-docker
+  type: docker-image
+  source:
+    repository: bosh/bosh-lite
+    username: {{docker_username}}
+    password: {{docker_password}}
+    email: foo@bar.com
+
+- name: hetzner
+  type: pool
+  source:
+    uri: git@github.com:concourse/locks.git
+    branch: master
+    pool: hetzner
+    private_key: {{hetzner_pool_key}}

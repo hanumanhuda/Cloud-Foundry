@@ -1,0 +1,123 @@
+{
+  "variables": {
+    "build_number": "0"
+  },
+  "builders": [{
+    "type": "virtualbox-iso",
+
+    "iso_url": "http://releases.ubuntu.com/14.04/ubuntu-14.04.4-server-amd64.iso",
+    "iso_checksum": "3ffb7a3690ce9a07ac4a4d1b829f990681f7e47d",
+    "iso_checksum_type": "sha1",
+
+    "guest_os_type": "Ubuntu_64",
+    "guest_additions_path": "/home/vagrant/VBoxGuestAdditions.iso",
+    "guest_additions_url":"http://download.virtualbox.org/virtualbox/5.1.0/VBoxGuestAdditions_5.1.0.iso",
+    "guest_additions_sha256":"6c7aa93de3fae6b784484151048c4ebdc953472383508254606d5d8512f27c25",
+    "virtualbox_version_file": ".vbox_version",
+
+    "headless": true,
+
+    "boot_wait": "10s",
+    "boot_command": [
+      "<esc><wait>",
+      "<esc><wait>",
+      "<enter><wait>",
+      "/install/vmlinuz<wait>",
+      " auto<wait>",
+      " console-setup/ask_detect=false<wait>",
+      " console-setup/layoutcode=us<wait>",
+      " console-setup/modelcode=pc105<wait>",
+      " debconf/frontend=noninteractive<wait>",
+      " debian-installer=en_US<wait>",
+      " fb=false<wait>",
+      " initrd=/install/initrd.gz<wait>",
+      " kbd-chooser/method=us<wait>",
+      " keyboard-configuration/layout=USA<wait>",
+      " keyboard-configuration/variant=USA<wait>",
+      " locale=en_US<wait>",
+      " netcfg/get_domain=vm<wait>",
+      " netcfg/get_hostname=ubuntu<wait>",
+      " noapic<wait>",
+      " nomodeset<wait>",
+      " preseed/url=http://{{ .HTTPIP }}:{{ .HTTPPort }}/preseed.cfg<wait>",
+      " -- <wait>",
+      "<enter><wait>"
+    ],
+
+    "http_directory": "http",
+
+    "ssh_username": "vagrant",
+    "ssh_password": "vagrant",
+    "ssh_wait_timeout": "60m",
+
+    "disk_size": 81920,
+
+    "shutdown_command": "echo 'vagrant' | sudo -S shutdown -P now",
+
+    "vboxmanage": [
+      [ "modifyvm", "{{ .Name }}", "--memory", "1024" ],
+      [ "modifyvm", "{{ .Name }}", "--cpus", "1" ]
+    ]
+  }],
+
+  "provisioners": [{
+    "type": "shell",
+    "execute_command": "echo 'vagrant' | {{ .Vars }} sudo -S -E {{ .Path }}",
+    "scripts": [
+      "scripts/update-resolv.conf.sh",
+      "scripts/quiet-tty-warning.sh",
+      "scripts/apt-update.sh",
+      "scripts/update-ruby.sh",
+      "scripts/update-trusty-kernel.sh",
+      "scripts/vbox-guest-additions.sh",
+      "scripts/kernel-cleanup.sh",
+      "scripts/admin-sudoers.sh",
+      "scripts/increase-loop-devices.sh",
+      "scripts/setup-syslog.sh",
+      "scripts/setup-ntpdate.sh",
+      "scripts/prevent-routing-loops.sh",
+      "scripts/disable-local-ip-masq.sh"
+    ]
+  },{
+    "type": "shell",
+    "scripts": [ "scripts/vagrant-pub-key.sh" ]
+  },{
+    "type": "shell",
+    "inline": "echo 'vagrant' | sudo -S usermod -a -G admin vagrant"
+  },{
+    "type": "file",
+    "source": "bosh-release.tgz",
+	  "destination": "/tmp/bosh-release.tgz"
+  },{
+    "type": "file",
+    "source": "bosh-warden-cpi-release.tgz",
+	  "destination": "/tmp/bosh-warden-cpi-release.tgz"
+  },{
+    "type": "file",
+    "source": "garden-linux-release.tgz",
+    "destination": "/tmp/garden-linux-release.tgz"
+  },{
+    "type": "packer-bosh",
+    "assets_dir": "packer-bosh/assets",
+    "manifest_path": "bosh_lite_manifest.yml",
+    "ssh_password": "vagrant"
+  },{
+    "type": "shell",
+    "execute_command": "echo 'vagrant' | {{ .Vars }} sudo -S -E {{ .Path }}",
+    "remote_path": "/opt/bosh-provisioner/packer-shell.sh",
+    "scripts": [
+      "scripts/add-vcap-to-vagrant.sh",
+      "scripts/set-temp-dir.sh",
+      "scripts/install-cli-tools.sh",
+      "scripts/clean-up.sh",
+      "scripts/shrink-disk.sh"
+    ]
+  }],
+
+  "post-processors": [{
+    "type": "vagrant",
+    "keep_input_artifact": true,
+    "vagrantfile_template": "templates/vagrant-local.tpl",
+    "output": "bosh-lite-{{ .Provider }}-ubuntu-trusty-{{user `build_number`}}.box"
+  }]
+}

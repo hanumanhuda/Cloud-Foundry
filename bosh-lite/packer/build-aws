@@ -1,0 +1,41 @@
+#!/bin/bash
+
+BOSH_RELEASE_VERSION=$1
+WARDEN_RELEASE_VERSION=$2
+GARDEN_LINUX_RELEASE_VERSION=$3
+BOSH_LITE_CANDIDATE_BUILD_NUMBER=$4 # optional
+BASE_AMI=$5 # optional
+REGION=$6 # optional
+
+function packer_build() {
+  template_path=$(dirname $0)/templates/aws.json
+
+  args=""
+
+  if [ -n "$BOSH_LITE_CANDIDATE_BUILD_NUMBER" ]; then
+    args="$args -var 'build_number=$BOSH_LITE_CANDIDATE_BUILD_NUMBER'"
+  fi
+
+  if [ -n "$BASE_AMI" ]; then
+    args="$args -var 'base_ami=$BASE_AMI'"
+  fi
+
+  if [ -n "$REGION" ]; then
+    args="$args -var 'region=$REGION'"
+  fi
+
+  sh -c "packer build $args $template_path"
+}
+
+function main() {
+  $(dirname $0)/render_bosh_lite_manifest \
+    $BOSH_RELEASE_VERSION \
+    $WARDEN_RELEASE_VERSION \
+    $GARDEN_LINUX_RELEASE_VERSION
+
+  export PACKER_CONFIG=$($(dirname $0)/fetch_packer_bosh)
+
+  packer_build
+}
+
+main

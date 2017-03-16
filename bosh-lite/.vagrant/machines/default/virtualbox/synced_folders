@@ -1,0 +1,1 @@
+{"virtualbox":{"/vagrant":{"mount_options":["dmode=777","fmode=777"],"guestpath":"/vagrant","hostpath":"/home/hanuman/workspace/bosh-lite","disabled":false,"__vagrantfile":true}}}

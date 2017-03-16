@@ -1,0 +1,23 @@
+---
+platform: linux
+
+image_resource:
+  type: docker-image
+  source:
+    repository: cloudfoundry/bosh-lite-ci
+
+inputs:
+- name: bosh-lite
+
+params:
+  CANDIDATE_BUILD_NUMBER: 2824
+
+  BOSH_AWS_ACCESS_KEY_ID:
+  BOSH_AWS_SECRET_ACCESS_KEY:
+  BOSH_KEY_PATH: /tmp/build/src/bosh-lite/ci/id_rsa_bosh
+
+  OS_NAME: ubuntu
+  OS_VERSION: trusty
+
+run:
+  path: bosh-lite/ci/build-stemcell.sh
